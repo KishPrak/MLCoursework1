@@ -3,23 +3,26 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.feature_selection import mutual_info_regression
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import r2_score
+from sklearn.inspection import permutation_importance
 
 
 
 data = pd.read_csv('Data/CW1_train.csv')
 
+#Initial check if can be solved by linear model
 def getCorrelationMatrix(data):
     co_mtx = data.corr(numeric_only=True)
     print(co_mtx)
     sns.heatmap(co_mtx, cmap="YlGnBu", annot=True, fmt=".2f")
     plt.show()
 
-
+#Checking relationship between target var and the highest correlated feature
 def plotDepthvsOutcome(data):
     sns.scatterplot(x='depth', y='outcome', data=data)
     plt.show()
 
-
+#Since linear didn't yield high results, checking mutual information to see non-linear relationships
 def getMutualInfo(data):
     X = data.drop(columns=['outcome'])
     y = data['outcome']
@@ -30,7 +33,6 @@ def getMutualInfo(data):
         drop_first=True
     )
     discrete_mask = X_ohe.dtypes == 'uint8'
-    #Scale continuous features (important for kNN MI)
     continuous_cols = X_ohe.columns[~discrete_mask]
     scaler = StandardScaler()
     X_ohe[continuous_cols] = scaler.fit_transform(X_ohe[continuous_cols])
@@ -45,8 +47,6 @@ def getMutualInfo(data):
     mi_series = pd.Series(mi, index=X_ohe.columns).sort_values(ascending=False)
     return mi_series
 
-def testWithBaselineModel(data):
-    pass
 
 #plotDepthvsOutcome(data)
 getCorrelationMatrix(data)

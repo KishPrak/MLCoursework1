@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold, cross_val_score, train_test_split
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
@@ -15,21 +15,15 @@ from sklearn.inspection import permutation_importance
 
 import shap
 import matplotlib.pyplot as plt
-import torch
-
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-else:
-    device = torch.device("cpu")
-
 
 
 # ============================================================
 # 1. LOAD DATA
 # ============================================================
-df = pd.read_csv('Data/CW1_train.csv')
-target = "outcome"
 
+df = pd.read_csv("Data/CW1_train.csv")
+
+target = "outcome"
 y = df[target]
 X = df.drop(columns=[target])
 
@@ -38,7 +32,7 @@ numeric_cols = [c for c in X.columns if c not in categorical_cols]
 
 
 # ============================================================
-# 2. TRAIN / TEST SPLIT
+# 2. TRAIN / TEST SPLIT (ONLY FOR FINAL INTERPRETATION)
 # ============================================================
 
 X_train, X_test, y_train, y_test = train_test_split(
@@ -52,13 +46,11 @@ X_train, X_test, y_train, y_test = train_test_split(
 # 3. PREPROCESSORS
 # ============================================================
 
-# Ridge needs scaling
 preprocessor_ridge = ColumnTransformer([
     ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
     ("num", StandardScaler(), numeric_cols)
 ])
 
-# Trees do not need scaling
 preprocessor_tree = ColumnTransformer([
     ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
     ("num", "passthrough", numeric_cols)
@@ -86,7 +78,7 @@ rf_model = Pipeline([
 xgb_model = Pipeline([
     ("preprocessor", preprocessor_tree),
     ("model", XGBRegressor(
-        n_estimators=2000,
+        n_estimators=1000,
         learning_rate=0.05,
         max_depth=6,
         subsample=0.8,
@@ -97,30 +89,66 @@ xgb_model = Pipeline([
 
 
 # ============================================================
-# 5. TRAIN + EVALUATE
+# 5. CROSS VALIDATION FUNCTION
 # ============================================================
 
-def evaluate_model(name, model):
+def cross_validate_model(name, model):
+    print("\n" + "=" * 60)
+    print(f"Cross Validating: {name}")
+
+    cv = KFold(n_splits=5, shuffle=True, random_state=42)
+
+    # RMSE scoring (negative in sklearn)
+    rmse_scores = cross_val_score(
+        model,
+        X_train,
+        y_train,
+        cv=cv,
+        scoring="neg_root_mean_squared_error"
+    )
+
+    r2_scores = cross_val_score(
+        model,
+        X_train,
+        y_train,
+        cv=cv,
+        scoring="r2"
+    )
+
+    print(f"Mean RMSE: {-rmse_scores.mean():.4f}")
+    print(f"Std RMSE : {rmse_scores.std():.4f}")
+
+    print(f"Mean R²  : {r2_scores.mean():.4f}")
+    print(f"Std R²   : {r2_scores.std():.4f}")
+
+
+# ============================================================
+# 6. TRAIN FINAL MODEL + INTERPRETATION
+# ============================================================
+
+def train_final_model(name, model):
+    print("\n" + "=" * 60)
+    print(f"Training Final Model: {name}")
+
     model.fit(X_train, y_train)
+
     preds = model.predict(X_test)
 
     rmse = np.sqrt(mean_squared_error(y_test, preds))
     r2 = r2_score(y_test, preds)
 
-    print("=" * 55)
-    print(f"{name} Results")
-    print("RMSE:", rmse)
-    print("R²:", r2)
+    print(f"Final Test RMSE: {rmse:.4f}")
+    print(f"Final Test R²  : {r2:.4f}")
 
     return model
 
 
 # ============================================================
-# 6. PERMUTATION IMPORTANCE FUNCTION
+# 7. PERMUTATION IMPORTANCE
 # ============================================================
 
 def run_permutation_importance(name, model):
-    print(f"\nPermutation Importance for {name}")
+    print("\nPermutation Importance:", name)
 
     perm = permutation_importance(
         model,
@@ -131,18 +159,14 @@ def run_permutation_importance(name, model):
         scoring="r2"
     )
 
-    # IMPORTANT: permutation importance is on raw input features
-    feature_names = X_test.columns
-
     perm_df = pd.DataFrame({
-        "feature": feature_names,
+        "feature": X_test.columns,
         "importance": perm.importances_mean
     }).sort_values("importance", ascending=False)
 
-    print("\nTop 15 Important Features:")
+    print("\nTop 15 Features:")
     print(perm_df.head(15))
 
-    # Plot top 15
     perm_df.head(15).plot(
         kind="barh",
         x="feature",
@@ -155,24 +179,20 @@ def run_permutation_importance(name, model):
 
 
 # ============================================================
-# 7. SHAP FUNCTION FOR TREE MODELS
+# 8. SHAP FOR TREE MODELS
 # ============================================================
 
 def run_tree_shap(name, model):
-    print(f"\nSHAP Values for {name}")
+    print("\nSHAP Values:", name)
 
-    # Extract transformed features
     X_test_transformed = model.named_steps["preprocessor"].transform(X_test)
     feature_names = model.named_steps["preprocessor"].get_feature_names_out()
 
-    # Extract core model
     core_model = model.named_steps["model"]
 
-    # SHAP explainer
     explainer = shap.TreeExplainer(core_model)
     shap_values = explainer.shap_values(X_test_transformed)
 
-    # Summary plot
     shap.summary_plot(
         shap_values,
         X_test_transformed,
@@ -181,43 +201,24 @@ def run_tree_shap(name, model):
 
 
 # ============================================================
-# 8. SHAP FUNCTION FOR RIDGE (LINEAR SHAP)
+# 9. RUN WORKFLOW
 # ============================================================
 
-def run_ridge_shap(model):
-    print("\nSHAP Values for Ridge Regression")
-
-    # Transform features
-    X_test_transformed = model.named_steps["preprocessor"].transform(X_test)
-    feature_names = model.named_steps["preprocessor"].get_feature_names_out()
-
-    ridge_core = model.named_steps["model"]
-
-    # LinearExplainer works well for linear models
-    explainer = shap.LinearExplainer(ridge_core, X_test_transformed)
-    shap_values = explainer.shap_values(X_test_transformed)
-
-    shap.summary_plot(
-        shap_values,
-        X_test_transformed,
-        feature_names=feature_names
-    )
+# --- CROSS VALIDATION ---
+cross_validate_model("Ridge Regression", ridge_model)
+cross_validate_model("Random Forest", rf_model)
+cross_validate_model("XGBoost", xgb_model)
 
 
-# ============================================================
-# 9. RUN EVERYTHING
-# ============================================================
-"""
-ridge_model = evaluate_model("Ridge Regression", ridge_model)
+# --- FINAL MODEL + INTERPRETATION ---
+ridge_model = train_final_model("Ridge Regression", ridge_model)
 run_permutation_importance("Ridge Regression", ridge_model)
-run_ridge_shap(ridge_model)
-"""
-rf_model = evaluate_model("Random Forest", rf_model)
-#run_permutation_importance("Random Forest", rf_model)
-run_tree_shap("Random Forest", rf_model)
 
-"""
-xgb_model = evaluate_model("XGBoost", xgb_model)
+
+xgb_model = train_final_model("XGBoost", xgb_model)
 run_permutation_importance("XGBoost", xgb_model)
 run_tree_shap("XGBoost", xgb_model)
-"""
+
+rf_model = train_final_model("Random Forest", rf_model)
+run_permutation_importance("Random Forest", rf_model)
+run_tree_shap("Random Forest", rf_model)
