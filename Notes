@@ -1,0 +1,10 @@
+Following rudimentary checks e.g. missing values
+
+First considering if problem is linear - performing a simple correlation heatmap check
+--> This yielded almost no correlation between anything and target, only depth had a reasonable correlation at -0.41
+--> Odd that carat gave a 0.00 correlation 
+
+Next tried mutual information relative ranking, to include non linear relationships
+--> Yielded 0.00 for carat too, likely that is uninvolved (by itself as least)
+--> Showed that depth was overwhelmingly important in comparison to others
+--> b3,b1,a1,y,x receive notable mentions whilst the rest doesn't seem like much
