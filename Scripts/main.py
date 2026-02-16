@@ -1,86 +1,77 @@
 import pandas as pd
 import numpy as np
-import joblib
-from sklearn.pipeline import Pipeline
+import matplotlib.pyplot as plt
+from sklearn.model_selection import cross_val_score
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.neural_network import MLPRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor, VotingRegressor
+from xgboost import XGBRegressor
+from sklearn.neural_network import MLPRegressor
+from sklearn.svm import SVR
+import pickle
 
 
-# ==========================================
-# 1. SETUP & DATA LOADING
-# ==========================================
-train_df = pd.read_csv('Data/CW1_train.csv')
-test_df = pd.read_csv('Data/CW1_test.csv')
-
+df = pd.read_csv('Data/CW1_train.csv')
 target = "outcome"
-# Use the Top 8 features + the engineered Depth squared
-top_features = ['depth', 'b3', 'b1', 'a1', 'a4', 'a3', 'y', 'price']
+
+y = df[target]
+features_top8 = ['depth', 'b3', 'b1', 'a1', 'a4', 'a3', 'y', 'price']
+X = df[features_top8]
+
 categorical_cols = ["cut", "color", "clarity"]
-numeric_cols = [c for c in top_features if c not in categorical_cols]
 
-def preprocess_with_engineered_features(data):
-    # Apply the Depth^2 transformation
-    data_copy = data.copy()
-    data_copy['depth_sq'] = data_copy['depth'] ** 2
-    return data_copy
 
-# Prepare Train Data
-X_train = preprocess_with_engineered_features(train_df[top_features])
-y_train = train_df[target]
-X_test_final = preprocess_with_engineered_features(test_df[top_features])
+def get_pipeline(model_type, features):
+    current_cat = [c for c in categorical_cols if c in features]
+    current_num = [c for c in features if c not in categorical_cols]
 
-# Update numeric list to include the new feature
-final_numeric = numeric_cols + ['depth_sq']
+    if model_type in ['ridge', 'mlp', 'svr', 'hybrid']:
+        preprocessor = ColumnTransformer([
+            ("cat", OneHotEncoder(handle_unknown="ignore"), current_cat),
+            ("num", StandardScaler(), current_num)
+        ])
+    else:
+        preprocessor = ColumnTransformer([
+            ("cat", OneHotEncoder(handle_unknown="ignore"), current_cat),
+            ("num", "passthrough", current_num)
+        ])
 
-# ==========================================
-# 2. DEFINE FINAL PIPELINE
-# ==========================================
-preprocessor = ColumnTransformer([
-    ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
-    ("num", StandardScaler(), final_numeric)
-])
+    if model_type == 'hybrid':
+        nn_model = MLPRegressor(hidden_layer_sizes=(64, 32), random_state=42)
+        rf_model = RandomForestRegressor(n_estimators=300, random_state=42)
+        model = VotingRegressor(
+            estimators=[('nn', nn_model), ('rf', rf_model)],
+            weights=[1, 1]
+        )
 
-# Use the parameters that yielded your best CV scores
-nn_model = MLPRegressor(
-    hidden_layer_sizes=(64, 32), 
-    alpha=0.01, 
-    early_stopping=True, 
-    random_state=42
-)
+    return Pipeline([
+        ("preprocessor", preprocessor),
+        ("model", model)
+    ])
 
-rf_model = RandomForestRegressor(
-    n_estimators=300, 
-    random_state=42, 
+
+pipe = get_pipeline("hybrid", features_top8)
+
+cv_scores = cross_val_score(
+    pipe,
+    X,
+    y,
+    cv=5,
+    scoring="r2",
     n_jobs=-1
 )
 
-hybrid_voting = VotingRegressor(
-    estimators=[('nn', nn_model), ('rf', rf_model)],
-    weights=[1, 1]
-)
+print("=" * 55)
+print("Hybrid Model (Top 8 Features)")
+print(f"Mean R²: {cv_scores.mean():.4f}")
+print(f"Std Dev: {cv_scores.std():.4f}")
+print("=" * 55)
 
-final_pipeline = Pipeline([
-    ("preprocessor", preprocessor),
-    ("model", hybrid_voting)
-])
 
-# ==========================================
-# 3. TRAIN, SAVE, AND PREDICT
-# ==========================================
-print("Training final hybrid model...")
-final_pipeline.fit(X_train, y_train)
+pipe.fit(X, y)
 
-# Save the model for your code supplement
-joblib.dump(final_pipeline, 'final_hybrid_model.pkl')
-print("Model saved as final_hybrid_model.pkl")
+with open("hybrid_pipeline.pkl", "wb") as f:
+    pickle.dump(pipe, f)
 
-# Generate Predictions
-print("Generating test set predictions...")
-predictions = final_pipeline.predict(X_test_final)
-
-# Save predictions to CSV (ensure the format matches project requirements)
-output = pd.DataFrame({'outcome_pred': predictions})
-output.to_csv('CW1_test_predictions.csv', index=False)
-print("Predictions saved to CW1_test_predictions.csv")
