@@ -2,38 +2,40 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from main import get_pipeline
+import pickle
 
 # Set seed
 np.random.seed(123)
 
-# Import training data
-trn = pd.read_csv('CW1_train.csv')
-X_tst = pd.read_csv('CW1_test.csv') # This does not include true outcomes (obviously)
+df_train = pd.read_csv('Data/CW1_train.csv')
+df_test = pd.read_csv('Data/CW1_test.csv')
 
-# Identify categorical columns
-categorical_cols = ['cut', 'color', 'clarity']
+target = "outcome"
+features_top8 = ['depth', 'b3', 'b1', 'a1', 'a4', 'a3', 'y', 'price']
+categorical_cols = ["cut", "color", "clarity"]
+X_train = df_train[features_top8]
+y = df_train[target]
+X_test = df_test[features_top8]
 
-# One-hot encode categorical variables
-trn = pd.get_dummies(trn, columns=categorical_cols, drop_first=True)
+def prepareTrainDataAndTrainModel():
+    pipe = get_pipeline("hybrid", features_top8)
+    return pipe.fit(X_train, y)
 
-# Train your model (using a simple LM here as an example)
-X_trn = trn.drop(columns=['outcome'])
-y_trn = trn['outcome']
-model = LinearRegression()
-model.fit(X_trn, y_trn)
+def prepareTestData(pipe):
+    return pipe.predict(X_test)
 
-# Test set predictions
-yhat_lm = model.predict(X_tst)
+pipe = prepareTrainDataAndTrainModel()
+yhat = prepareTestData(pipe)
 
-# Format submission:
-# This is a single-column CSV with nothing but your predictions
-out = pd.DataFrame({'yhat': yhat_lm})
-out.to_csv('CW1_submission_KNUMBER.csv', index=False) # Please use your k-number here
+out = pd.DataFrame({'yhat': yhat})
+out.to_csv('CW1_submission_K23153494.csv', index=False) 
 
 ################################################################################
 
 # At test time, we will use the true outcomes
-tst = pd.read_csv('CW1_test_with_true_outcome.csv') # You do not have access to this
+y_tst = pd.read_csv('Data/CW1_test_with_true_outcome.csv') # You do not have access to this
 
 # This is the R^2 function
 def r2_fn(yhat):
@@ -43,8 +45,9 @@ def r2_fn(yhat):
     r2 = 1 - (rss / tss)
     return r2
 
-# How does the linear model do?
-print(r2_fn(yhat_lm))
+
+print(r2_fn(yhat))
+
 
 
 
